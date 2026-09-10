@@ -13,6 +13,13 @@
   - [2.6 Secure Firewall 6100 Series](#26-secure-firewall-6100-series)
 - [3. Platforms you should not treat as new-purchase choices](#3-platforms-you-should-not-treat-as-new-purchase-choices)
 - [4. FTD virtual purchasing options](#4-ftd-virtual-purchasing-options)
+  - [4.1 Performance-license tiers](#41-performance-license-tiers)
+  - [4.2 FTDvU Unlimited tier](#42-ftdvu-unlimited-tier)
+  - [4.3 AWS purchase and deployment options](#43-aws-purchase-and-deployment-options)
+  - [4.4 Azure purchase and deployment options](#44-azure-purchase-and-deployment-options)
+  - [4.5 GCP purchase and deployment options](#45-gcp-purchase-and-deployment-options)
+  - [4.6 BYOL versus PAYG](#46-byol-versus-payg)
+  - [4.7 Private-cloud and hypervisor options](#47-private-cloud-and-hypervisor-options)
 - [5. Complete FTD feature-license model](#5-complete-ftd-feature-license-model)
 - [6. What each license actually unlocks](#6-what-each-license-actually-unlocks)
 - [7. Ordering bundle shorthand: T, TM, TC, TMC](#7-ordering-bundle-shorthand-t-tm-tc-tmc)
@@ -38,6 +45,8 @@ For FTD software, Cisco's current license names are:
 6. **Carrier** — subscription on supported platforms for Diameter, GTP/GPRS, SCTP, and M3UA inspection.
 
 Cisco ordering SKUs still commonly use the legacy shorthand **T**, **TM**, **TC**, and **TMC**, where **T = Threat/IPS + Security Intelligence**, **M = Malware**, and **C = URL**. This is why a quote can say “Threat” while the management GUI and newer documentation say “IPS.”
+
+For **FTDv**, Cisco currently offers performance-tiered entitlements from **FTDv5 through FTDv100**, plus **FTDvU (Unlimited)** for VMware and KVM on Threat Defense 10.0. AWS and Azure support both **BYOL and PAYG**, while GCP is **BYOL-only** in Cisco's current public-cloud compatibility matrix.
 
 ![Current platform lineup](../images/09-09-26-20-07_ftd_current_platform_lineup.svg)
 
@@ -204,30 +213,172 @@ The 9300 family reached end of sale on **31-Mar-2026**. The 6100 Series is the c
 
 ## 4. FTD virtual purchasing options
 
-Cisco Secure Firewall Threat Defense Virtual (FTDv) remains available for private cloud and public cloud use.
+Cisco Secure Firewall Threat Defense Virtual (**FTDv**) is the virtual form factor of Threat Defense. It can be purchased/deployed in private-cloud hypervisors and major public clouds. The important commercial distinction is between the **performance entitlement** and the **cloud consumption model**.
 
-### Performance tiers
+![FTDv purchase options](../images/09-09-26-20-39_ftdv-purchase-options.svg)
 
-Cisco's ordering guide lists six performance-tier subscription models:
+[Editable draw.io](../images/09-09-26-20-39_ftdv-purchase-options.drawio)
 
-- FTDv 5
-- FTDv 10
-- FTDv 20
-- FTDv 30
-- FTDv 50
-- FTDv 100
+### 4.1 Performance-license tiers
 
-The ordering SKUs use `FTD-V-5S-*`, `FTD-V-10S-*`, `FTD-V-20S-*`, `FTD-V-30S-*`, `FTD-V-50S-*`, and `FTD-V-100S-*`.
+Cisco's current FTDv performance tiers are:
 
-A Base subscription and a TMC subscription variant are available by tier. Unlike most physical appliances, **FTDv Base itself is subscription-based** under the performance-tier model.
+| Tier | License rate limit | RA VPN session limit | Typical minimum/reference footprint |
+|---|---:|---:|---|
+| **FTDv5** | 100 Mbps | 50 | 4 vCPU / 8 GB RAM |
+| **FTDv10** | 1 Gbps | 250 | 4 vCPU / 8 GB RAM |
+| **FTDv20** | 3 Gbps | 250 | 4 vCPU / 8 GB RAM |
+| **FTDv30** | 5 Gbps | 250 | 8 vCPU / 16 GB RAM |
+| **FTDv50** | 10 Gbps | 750 | 12 vCPU / 24 GB RAM |
+| **FTDv100** | 16 Gbps | 10,000 | 16 vCPU / 32 GB RAM |
+| **FTDvU** | **No rate limiter** | 20,000 at 32 vCPU; 32,000 at 64 vCPU | 32 vCPU / 64 GB or 64 vCPU / 128 GB |
 
-### Cloud commercial models
+For the classic tiers, the entitlement rate limiter is a **license ceiling**, not a guarantee that every cloud VM size will deliver that throughput under every inspection workload. Actual throughput depends on vCPU, NIC, hypervisor/cloud instance, packet size, enabled inspection, TLS decryption, IPS policy, and traffic mix.
 
-Cisco documents:
+Cisco's historical/current ordering families use names such as `FTD-V-5S-*`, `FTD-V-10S-*`, `FTD-V-20S-*`, `FTD-V-30S-*`, `FTD-V-50S-*`, and `FTD-V-100S-*`. Final PIDs and term options should be validated in Cisco Commerce Workspace because Cisco periodically refreshes virtual-license SKU structures.
 
-- **BYOL** for supported clouds/private virtualization.
-- **AWS:** BYOL and hourly/pay-as-you-go are supported.
-- Cisco's ordering guide states **Azure** has licensing options depending marketplace offer, while **GCP and OCI are BYOL-focused** in the cited ordering guidance. Always check the current marketplace listing before quoting because cloud marketplace commercial models can change faster than appliance SKUs.
+Unlike most physical appliances, **FTDv Base is subscription/performance-tier based** rather than simply inheriting a perpetual platform entitlement from purchased hardware.
+
+### 4.2 FTDvU Unlimited tier
+
+Threat Defense 10.0 introduced **FTDvU**, the Unlimited performance tier.
+
+Cisco documents FTDvU as:
+
+- supported on **VMware and KVM**;
+- able to boot with up to **64 vCPUs**;
+- **not subject to the normal FTDv license rate limiter**;
+- limited to **20,000 RA VPN sessions** at 32 vCPU / 64 GB RAM;
+- limited to **32,000 RA VPN sessions** at 64 vCPU / 128 GB RAM.
+
+Do **not** treat FTDvU as an AWS/Azure/GCP marketplace tier merely because the general FTDv data sheet lists 64-vCPU maximum system requirements. Cisco's Threat Defense 10.0 feature documentation specifically identifies **VMware and KVM only** for the FTDvU feature.
+
+### 4.3 AWS purchase and deployment options
+
+Cisco's current compatibility matrix supports **both BYOL and PAYG on AWS**.
+
+| AWS option | How Cisco licensing is obtained | Billing model | Practical meaning |
+|---|---|---|---|
+| **FTDv BYOL** | Purchase/own the Cisco FTDv entitlement separately | Cisco license/subscription + AWS EC2 infrastructure | Best when you want Cisco enterprise licensing/term control and license portability within supported rules |
+| **FTDv PAYG** | License is consumed through AWS Marketplace | Hourly/usage-based marketplace charge + AWS infrastructure | No separate upfront FTDv platform-license purchase for that PAYG instance |
+
+The AWS Marketplace currently lists separate Cisco offers for **Secure Firewall Threat Defense Virtual - BYOL** and **Secure Firewall Threat Defense Virtual - PAYG**.
+
+For PAYG, AWS states that pricing is based on actual usage and that infrastructure charges are additional. Cisco's AWS PAYG listing also states that all licensed features are enabled under the usage-based model; pricing varies with the EC2 instance type selected. This is commercially different from BYOL, where the FTDv entitlement is supplied from the customer's Cisco licensing relationship.
+
+AWS deployment capabilities currently include:
+
+- BYOL: **Yes**
+- PAYG: **Yes**
+- Auto Scale: **Yes**
+- High Availability / clustering: **Yes**
+- Cisco Multicloud Defense orchestration: **Yes**
+- FMC management: **Yes**
+- FDM management: **Yes**
+
+Threat Defense 10.0 also adds AWS **two-arm Multi-AZ cluster** support for applicable FTDv AWS deployments.
+
+### 4.4 Azure purchase and deployment options
+
+Cisco's current data sheet and Microsoft Marketplace both show **BYOL and PAYG** for Azure.
+
+Microsoft Marketplace currently exposes the Cisco offer as **“Cisco Secure Firewall Threat Defense Virtual – BYOL and PAYG.”**
+
+| Azure option | Cisco entitlement model | Billing implication |
+|---|---|---|
+| **BYOL** | Bring an FTDv license/entitlement purchased through Cisco/channel | Azure VM costs remain separate |
+| **PAYG** | Consume the Cisco firewall licensing through the Azure marketplace offer | Marketplace/software usage + Azure infrastructure |
+
+Azure deployment capabilities currently include:
+
+- BYOL: **Yes**
+- PAYG: **Yes**
+- Auto Scale: **Yes**
+- High Availability / clustering: **Yes**
+- Cisco Multicloud Defense orchestration: **Yes**
+- FMC management: **Yes**
+- FDM management: **Yes**
+
+Threat Defense 10.0 also introduced **Azure MANA NIC** support for selected Azure VM sizes, including `Standard_D8s_v5` and `Standard_D16s_v5` in Cisco's current feature documentation. Always check the release-specific Azure deployment guide before choosing a VM SKU because supported instance types and NIC capabilities can change.
+
+Azure also has a dedicated **Secure Firewall Threat Defense for Azure Virtual WAN** marketplace/deployment option for designs where Cisco FTDv is inserted into Azure Virtual WAN. Treat that as a deployment architecture/offer, not as a new FTD security-license tier.
+
+### 4.5 GCP purchase and deployment options
+
+**GCP is BYOL-only** for FTDv in Cisco's current compatibility matrix and GCP deployment guide.
+
+| GCP option | Supported? | Meaning |
+|---|---|---|
+| **BYOL** | **Yes** | Purchase/use a Cisco FTDv entitlement and deploy it on supported GCP Compute Engine machine types |
+| **PAYG** | **No** | Cisco does not currently list PAYG for GCP FTDv |
+
+Current GCP FTDv capabilities include:
+
+- BYOL: **Yes**
+- PAYG: **No**
+- Auto Scale: **Yes**
+- High Availability / clustering: **Yes**
+- Cisco Multicloud Defense orchestration: **Yes**
+- FMC management: **Yes**
+- FDM management: **Yes** on supported releases
+
+Cisco's 10.0 GCP guide documents a **maximum of 16 vCPUs per FTDv GCP instance**, which is another reason not to confuse the private-cloud FTDvU 32/64-vCPU tier with GCP deployment sizing.
+
+GCP supports multiple compute-optimized and general-purpose machine types for FTDv. Because supported GCP machine types can change without notice, size the Cisco entitlement and GCP Compute Engine VM together using the current release-specific deployment guide.
+
+### 4.6 BYOL versus PAYG
+
+The simplest purchasing decision is:
+
+```text
+Need enterprise-controlled Cisco licensing / existing Cisco agreement?
+        |
+       Yes
+        v
+      BYOL
+        |
+        +--> choose FTDv entitlement tier
+        +--> deploy on supported cloud/hypervisor VM
+        +--> pay cloud infrastructure separately
+
+Prefer cloud-native hourly consumption?
+        |
+       Yes
+        v
+      PAYG
+        |
+        +--> AWS or Azure currently supported
+        +--> Cisco software charge through marketplace
+        +--> cloud compute/network/storage charges still separate
+```
+
+**BYOL does not mean the cloud VM is free.** It means only that the Cisco software entitlement is supplied separately. You still pay AWS, Azure, or GCP for the underlying VM, disks, network interfaces, load balancers, data transfer, public addresses, and other cloud services used by the design.
+
+**PAYG does not mean every Cisco product or management component is automatically included.** Confirm the exact marketplace offer, management model, support, Secure Client licensing, and any external services needed for the deployment.
+
+### 4.7 Private-cloud and hypervisor options
+
+Cisco's current FTDv data sheet lists these private-cloud/on-premises platforms:
+
+- **VMware**
+- **KVM**
+- **OpenStack**
+- **Nutanix**
+- **Microsoft Hyper-V**
+
+Threat Defense 10.0 added Microsoft Hyper-V support and the FTDvU Unlimited tier for VMware/KVM.
+
+Cisco's public-cloud deployment summary also lists:
+
+- AWS
+- Azure
+- GCP
+- OCI
+- Alibaba Cloud
+- Megaport
+- Equinix
+
+The current compatibility matrix is not identical across clouds. For example, AWS/Azure/GCP support clustering and autoscaling, while other public-cloud environments have different feature combinations. Always use the platform-specific 10.x deployment guide rather than assuming a feature supported on AWS is supported on every FTDv target.
 
 ## 5. Complete FTD feature-license model
 
@@ -423,7 +574,12 @@ Cisco retired an older SAL-SUB Cloud SaaS license on 30-Jun-2026; use the curren
 | Enterprise edge around 10–45 Gbps | Secure Firewall 3100 |
 | Large enterprise/DC around 65–140 Gbps inspected throughput | Secure Firewall 4200 |
 | Very-high-scale DC/service provider hundreds of Gbps | Secure Firewall 6160/6170 |
-| Virtual/private/public cloud | FTDv performance tier |
+| Private VMware/KVM high-scale virtual firewall | **FTDvU** if Threat Defense 10.0+ and the design benefits from >16-vCPU scale/no license rate limiter |
+| AWS virtual firewall with existing Cisco licensing | **FTDv BYOL** |
+| AWS cloud-native hourly consumption | **FTDv PAYG** |
+| Azure virtual firewall with existing Cisco licensing | **FTDv BYOL** |
+| Azure cloud-native marketplace consumption | **FTDv PAYG** |
+| GCP virtual firewall | **FTDv BYOL**; PAYG is not currently supported |
 | Small number of locally managed appliances | FDM if the desired feature set/platform supports it |
 | Centralized on-prem management | FMC 1800/2800/4800 or FMCv |
 | Cloud-delivered central management | Security Cloud Control Firewall Management + included cloud-delivered FMC |
@@ -432,22 +588,27 @@ For a standard enterprise that wants the complete traditional security stack, th
 
 **Appliance + Essentials + TMC (IPS + Malware + URL) + Secure Client if RA VPN is needed + support + management platform as required.**
 
+For FTDv BYOL, replace the physical appliance purchase with the appropriate **FTDv performance entitlement**, then add the needed security-service subscriptions and cloud/hypervisor infrastructure.
+
 ## 12. Important ordering and licensing caveats
 
 1. **Do not confuse “Threat” with a separate product from IPS.** In current Cisco naming, Threat-license ordering code `T` maps to the IPS/Security Intelligence capability set.
 2. **TMC does not include Secure Client.** Remote-access VPN licensing is separate.
 3. **Essentials is not an annual subscription on most physical appliances.** The optional security services are the term-based pieces.
 4. **FTDv differs:** its Base entitlement is subscription/performance-tier based.
-5. **URL category/reputation filtering requires URL entitlement; exact URL matching itself does not.**
-6. **Malware requires the IPS foundation.**
-7. **Security Intelligence is tied to IPS/Threat, not the URL license.**
-8. **Strong crypto/export-controlled functionality is an eligibility/registration issue, not simply “buy TMC.”** It can affect VPN/SSL functions.
-9. **Cloud-delivered FMC is included with Security Cloud Control Firewall Management's base tenant subscription, but per-device management licensing is still required.**
-10. **High-availability firewalls do not necessarily double every management entitlement.** Security Cloud Control documents an HA pair as one managed device for its device-license purpose; verify feature-license consumption separately for the specific deployment model.
-11. **FMC hardware and FMCv licensing are different.** Physical FMC does not use the FMCv 2/10/25/300-device license model.
-12. **A product appearing in Cisco documentation does not prove it is still orderable.** Always cross-check EoS and CCW.
-13. **Support contracts are separate commercial items from security subscriptions.** Software/subscription support rules vary by management offer and Secure Client license type.
-14. **Cisco ordering guides occasionally contain stale or misaligned descriptive strings.** Validate final PIDs in CCW, especially when a row description appears inconsistent with the SKU itself.
+5. **FTDvU is currently a VMware/KVM Threat Defense 10.0+ capability, not a generic AWS/Azure/GCP unlimited tier.**
+6. **AWS and Azure currently support FTDv BYOL and PAYG; GCP supports BYOL only.**
+7. **PAYG software charges do not replace cloud infrastructure charges.** EC2/Azure VM, storage, networking, load balancers, data transfer, and other cloud services are billed separately.
+8. **URL category/reputation filtering requires URL entitlement; exact URL matching itself does not.**
+9. **Malware requires the IPS foundation.**
+10. **Security Intelligence is tied to IPS/Threat, not the URL license.**
+11. **Strong crypto/export-controlled functionality is an eligibility/registration issue, not simply “buy TMC.”** It can affect VPN/SSL functions.
+12. **Cloud-delivered FMC is included with Security Cloud Control Firewall Management's base tenant subscription, but per-device management licensing is still required.**
+13. **High-availability firewalls do not necessarily double every management entitlement.** Security Cloud Control documents an HA pair as one managed device for its device-license purpose; verify feature-license consumption separately for the specific deployment model.
+14. **FMC hardware and FMCv licensing are different.** Physical FMC does not use the FMCv 2/10/25/300-device license model.
+15. **A product appearing in Cisco documentation does not prove it is still orderable.** Always cross-check EoS and CCW.
+16. **Support contracts are separate commercial items from security subscriptions.** Software/subscription support rules vary by management offer and Secure Client license type.
+17. **Cisco ordering guides occasionally contain stale or misaligned descriptive strings.** Validate final PIDs in CCW, especially when a row description appears inconsistent with the SKU itself.
 
 ## 13. Verification checklist before purchase
 
@@ -457,6 +618,10 @@ Before signing a quote, validate all of the following:
 |---|---|
 | Hardware status | Cisco product page says Available Order, not End of Sale |
 | FTD software support | Desired FTD release supports the platform |
+| FTDv cloud/hypervisor | Exact AWS/Azure/GCP instance or hypervisor version is supported by the selected FTD release |
+| FTDv commercial model | BYOL vs PAYG is supported on the selected cloud; GCP is currently BYOL-only |
+| FTDv entitlement | FTDv5/10/20/30/50/100 or applicable FTDvU tier matches required throughput and RA-VPN scale |
+| FTDvU applicability | VMware/KVM only for current 10.0 FTDvU support; do not quote it as a public-cloud marketplace tier without newer Cisco documentation |
 | Management compatibility | FMC/FMCv/cloud-delivered FMC release supports that FTD release |
 | Throughput metric | Size using FW+AVC+IPS and TLS, not only stateful firewall throughput |
 | Interface requirements | Built-in ports plus required network modules/transceivers |
@@ -477,6 +642,14 @@ Before signing a quote, validate all of the following:
 Primary Cisco references used for this guide:
 
 - Cisco Network Security Ordering Guide: https://www.cisco.com/c/en/us/products/collateral/security/secure-firewall/guide-c07-737902.html
+- Cisco Secure Firewall Threat Defense Virtual Data Sheet: https://www.cisco.com/c/en/us/products/collateral/security/firewalls/threat-defense-virtual-ds.html
+- Threat Defense Virtual 10.0 Getting Started Guide / What's New: https://www.cisco.com/c/en/us/td/docs/security/firepower/quick_start/consolidated_ftdv_gsg/threat-defense-virtual-10-0-gsg/m_what-s-new-in-10-0-0-1.html
+- Threat Defense Virtual 10.0 GCP Deployment Guide: https://www.cisco.com/c/en/us/td/docs/security/firepower/quick_start/consolidated_ftdv_gsg/threat-defense-virtual-10-0-gsg/m-ftdv-gsg-gcp.html
+- Firewall Threat Defense Virtual Licenses: https://docs.manage.security.cisco.com/cdfmc/r_ftdv-licensing-fmc.html
+- AWS Marketplace — Cisco Secure Firewall Threat Defense Virtual BYOL: https://aws.amazon.com/marketplace/pp/prodview-p2336sqyya34e
+- AWS Marketplace — Cisco Secure Firewall Threat Defense Virtual PAYG: https://aws.amazon.com/marketplace/pp/prodview-agotwrhawevmc
+- Microsoft Marketplace — Cisco Secure Firewall Threat Defense Virtual BYOL and PAYG: https://marketplace.microsoft.com/en-us/product/cisco.cisco-firepower-threat-defense-appliance
+- Microsoft Marketplace — Cisco Secure Firewall Threat Defense for Azure Virtual WAN: https://marketplace.microsoft.com/marketplace/apps/cisco.cisco-tdv-for-vwan
 - Secure Firewall 220 Data Sheet: https://www.cisco.com/c/en/us/products/collateral/security/firewalls/secure-firewall-200-series/secure-firewall-220-ds.html
 - Secure Firewall 1200 Series Data Sheet: https://www.cisco.com/c/en/us/products/collateral/security/firewalls/secure-firewall-1200-series-ds.html
 - Secure Firewall 3100 Series Data Sheet: https://www.cisco.com/c/en/us/products/collateral/security/firewalls/secure-firewall-3100-series-ds.html
@@ -498,8 +671,8 @@ Primary Cisco references used for this guide:
 
 ### Source information vs explanation
 
-**Source information:** Model names, measured Cisco performance figures, license names, subscription dependencies, PIDs, management licensing structure, and EoS dates above are taken from the cited Cisco material.
+**Source information:** Model names, measured Cisco performance figures, FTDv performance tiers, public-cloud BYOL/PAYG support, license names, subscription dependencies, PIDs, management licensing structure, and EoS dates above are taken from the cited Cisco/vendor marketplace material.
 
-**Additional explanation:** The use-case sizing and plain-English interpretation of T/TM/TC/TMC are explanatory mappings of Cisco's documented license terminology.
+**Additional explanation:** The use-case sizing, BYOL-versus-PAYG interpretation, and plain-English interpretation of T/TM/TC/TMC are explanatory mappings of Cisco's documented license terminology.
 
 **Reasonable inference:** Describing the 6100 as the practical current replacement direction for very-high-end 4100/9300-class greenfield purchasing is an architectural/commercial inference based on the 6100's 2026 release, performance tier, and the 4100/9300 EoS dates; it is not presented as a Cisco statement that every 4100/9300 design maps one-for-one to a 6100.
