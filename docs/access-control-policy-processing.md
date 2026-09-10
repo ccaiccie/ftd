@@ -2,6 +2,29 @@
 
 > Scope: Cisco Secure Firewall Threat Defense (FTD) managed primarily by Firewall Management Center (FMC), with notes that also apply conceptually to FDM/Security Cloud Control where documented. This guide focuses on how an Access Control Policy (ACP) is processed, how LINA and Snort 3 divide enforcement, why rules sometimes appear to “allow first and block later,” and how to troubleshoot policy decisions without confusing routing/NAT behavior with ACP behavior.
 
+## Table of contents
+
+- [1. Executive summary](#1-executive-summary)
+- [2. Where ACP fits in the FTD architecture](#2-where-acp-fits-in-the-ftd-architecture)
+- [3. Pre-ACP processing stages](#3-pre-acp-processing-stages)
+- [4. ACP rule evaluation logic](#4-acp-rule-evaluation-logic)
+- [5. ACP actions in depth](#5-acp-actions-in-depth)
+- [6. L3/L4 versus L7 blocking: why the first packets differ](#6-l3l4-versus-l7-blocking-why-the-first-packets-differ)
+- [7. URL and application matching caveats](#7-url-and-application-matching-caveats)
+- [8. Default action](#8-default-action)
+- [9. End-to-end example](#9-end-to-end-example)
+- [10. Save versus Deploy](#10-save-versus-deploy)
+- [11. Verification and troubleshooting workflow](#11-verification-and-troubleshooting-workflow)
+- [12. Troubleshooting by symptom](#12-troubleshooting-by-symptom)
+- [13. Common mistakes](#13-common-mistakes)
+- [14. Version notes and newer behavior](#14-version-notes-and-newer-behavior)
+  - [14.1 Snort 3](#141-snort-3)
+  - [14.2 FMC 10.0 access-control-related changes](#142-fmc-100-access-control-related-changes)
+  - [14.3 EVE: what it is and why it can matter to ACP](#143-eve-what-it-is-and-why-it-can-matter-to-acp)
+- [15. Design checklist](#15-design-checklist)
+- [16. Source information vs explanation vs inference](#16-source-information-vs-explanation-vs-inference)
+- [17. References](#17-references)
+
 ## 1. Executive summary
 
 An ACP is the main stateful security policy that determines whether a new connection is trusted, blocked, monitored, or allowed for deeper inspection. However, **ACP rules do not operate in isolation and are not necessarily the first security stage a packet encounters**.
@@ -464,21 +487,103 @@ ACP is only one enforcement stage. Check:
 
 ## 14. Version notes and newer behavior
 
-### Snort 3
+### 14.1 Snort 3
 
 Snort 3 is the strategic inspection engine for modern Secure Firewall releases. Cisco documents Snort 2 as deprecated in 7.7, and 7.7+ upgrade behavior prevents upgrading a Snort 2 device without first moving to Snort 3.
 
-### FMC 10.0 access-control-related changes
+### 14.2 FMC 10.0 access-control-related changes
 
 Cisco’s current 10.0 documentation introduces or highlights several features that affect ACP operations/design:
 
 - **Application Default** matching in application-based access-control rules, allowing an application rule to be constrained to its default ports or to any port; manual Ports-tab conditions override that selection.
-- improved **EVE** integration, including using EVE for application detection when enabled and revised monitor/protect behavior.
+- improved **Encrypted Visibility Engine (EVE)** integration that can contribute to application identification when EVE is enabled.
 - **identity-based dynamic access control** using current user/device context from supported identity integrations.
 - **simultaneous ACP editing** with merge handling for non-conflicting changes.
 - protocol-aware/enriched inspector logging for selected access-control traffic when advanced logging is enabled.
 
 Treat the running FMC/FTD release documentation as authoritative because rule options and UI locations evolve by release.
+
+### 14.3 EVE: what it is and why it can matter to ACP
+
+**EVE means Encrypted Visibility Engine.** It is not another mandatory ACP stage and it should not be inserted into the basic packet-flow sequence as though every connection must pass through a separate “EVE policy.” Instead, think of EVE as an additional source of classification intelligence for encrypted traffic when the feature is enabled and supported on the running release/platform.
+
+The problem EVE addresses is straightforward: much modern application traffic is TLS encrypted. Traditional deep application identification becomes harder when the payload is not decrypted. EVE analyzes characteristics that remain observable around encrypted sessions—such as TLS/session metadata and traffic characteristics—and applies Cisco’s analytics/modeling to infer useful information without requiring plaintext inspection of the application payload.
+
+For ACP processing, the important relationship is **EVE → application identification → application-based rule matching**. In FMC 10.0, Cisco documents enhanced integration in which EVE information can be used for application detection. Therefore, if an ACP rule contains an application condition, EVE can potentially improve or accelerate the application identity available to access control for qualifying encrypted connections.
+
+A simplified conceptual flow is:
+
+```text
+Encrypted connection
+        |
+        v
+LINA / Snort flow handling
+        |
+        +--> normal AppID evidence
+        |
+        +--> EVE-derived encrypted-session evidence (when enabled)
+        |
+        v
+Application classification
+        |
+        v
+ACP application condition can become matchable
+        |
+        +--> Allow / Trust / Block / deeper inspection according to rule
+```
+
+This does **not** mean EVE replaces TLS decryption. Decryption and EVE solve different problems:
+
+| Capability | TLS Decryption | EVE |
+|---|---|---|
+| Exposes plaintext application data | Yes, when traffic is successfully decrypted | No |
+| Lets Snort inspect full decrypted payload | Yes | No |
+| Can provide useful visibility without decrypting payload | Limited to metadata that remains visible | Yes, this is its purpose |
+| Can contribute to application identification | Yes | Yes, on supported/enabled releases |
+| Replaces ACP | No | No |
+| Replaces AppID/Snort | No | No; it supplements classification |
+
+#### When EVE matters to an ACP rule
+
+EVE is relevant when all of the following are true:
+
+1. the traffic is encrypted;
+2. EVE is enabled/supported in the deployment;
+3. the ACP decision depends on application identity or related classification;
+4. the application can be recognized from the evidence available to EVE/AppID.
+
+It is generally **not relevant** to a simple L3/L4 rule such as:
+
+```text
+Source:      10.10.10.0/24
+Destination: 198.51.100.20
+Port:        TCP/443
+Action:      Block
+```
+
+LINA already has everything required to enforce that rule from packet headers; EVE does not need to participate in the decision.
+
+It becomes more relevant to a rule such as:
+
+```text
+Source:      INSIDE users
+Application: Specific encrypted SaaS application
+Action:      Block
+```
+
+In that case the firewall needs an application identity. Snort/AppID normally develops that identity from observed traffic; EVE can supply additional encrypted-session classification evidence when configured and supported.
+
+#### What EVE does not imply
+
+Do not assume any of the following:
+
+- every encrypted connection is classified conclusively by EVE;
+- EVE reveals URLs or payload contents as though TLS had been decrypted;
+- enabling EVE causes an independent block before ACP;
+- an EVE result automatically permits or denies traffic;
+- EVE eliminates the need for decryption where URL, content, file, malware, or full intrusion inspection requires plaintext visibility.
+
+The final access decision still comes from the configured security policy. EVE contributes context; it is not itself the ACP action.
 
 ## 15. Design checklist
 
