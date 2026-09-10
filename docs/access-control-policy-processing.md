@@ -42,9 +42,9 @@ A useful mental model for modern FTD is:
 9. If an Allow/Interactive Block rule has an intrusion or file policy, allowed traffic is then subjected to that deeper inspection.
 10. LINA ultimately forwards or drops based on the locally enforceable decision and, where Snort is involved, Snort’s returned verdict.
 
-![FTD ACP processing order](../images/ftd-acp-processing-order.svg)
+![FTD ACP processing order](../images/09-09-26-18-50_ftd-acp-processing-order.svg)
 
-[Editable draw.io](../images/ftd-acp-processing-order.drawio)
+[Editable draw.io](../images/09-09-26-18-50_ftd-acp-processing-order.drawio)
 
 ## 2. Where ACP fits in the FTD architecture
 
@@ -77,9 +77,9 @@ Snort 3 supplies the inspection context that LINA cannot determine from only pac
 
 A rule that looks like “Block HTTP” in FMC is not necessarily compiled as a simple LINA deny. LINA cannot know that a TCP connection is HTTP from the SYN alone. Cisco documents that an application-based block is represented in LINA as permit-to-inspection so that Snort can classify the flow, after which a Snort drop verdict causes LINA to terminate it.
 
-![LINA and Snort roles](../images/ftd-acp-lina-snort.svg)
+![LINA and Snort roles](../images/09-09-26-18-50_ftd-acp-lina-snort.svg)
 
-[Editable draw.io](../images/ftd-acp-lina-snort.drawio)
+[Editable draw.io](../images/09-09-26-18-50_ftd-acp-lina-snort.drawio)
 
 ## 3. Pre-ACP processing stages
 
@@ -133,9 +133,9 @@ Identity mapping can supply username/group context before ACP user-based rules a
 
 ACP rules are evaluated from top to bottom. Cisco’s general behavior is “first decisive match wins,” with Monitor being the notable exception.
 
-![ACP rule evaluation](../images/ftd-acp-rule-evaluation.svg)
+![ACP rule evaluation](../images/09-09-26-18-50_ftd-acp-rule-evaluation.svg)
 
-[Editable draw.io](../images/ftd-acp-rule-evaluation.drawio)
+[Editable draw.io](../images/09-09-26-18-50_ftd-acp-rule-evaluation.drawio)
 
 ### 4.1 Conditions are ANDed within a rule
 
@@ -321,9 +321,9 @@ In FMC, editing/saving the ACP changes the policy configuration in the manager. 
 
 ## 11. Verification and troubleshooting workflow
 
-![ACP troubleshooting decision path](../images/ftd-acp-troubleshooting.svg)
+![ACP troubleshooting decision path](../images/09-09-26-18-50_ftd-acp-troubleshooting.svg)
 
-[Editable draw.io](../images/ftd-acp-troubleshooting.drawio)
+[Editable draw.io](../images/09-09-26-18-50_ftd-acp-troubleshooting.drawio)
 
 ### 11.1 `packet-tracer`
 
