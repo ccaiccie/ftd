@@ -246,15 +246,219 @@ LINA cannot know the application from the SYN alone. It therefore permits enough
 
 ## 7. URL and application matching caveats
 
-Application and URL rules can require different amounts of information and can behave differently for encrypted traffic.
+### 7.1 Can FTD match traffic by URL or URL category like Palo Alto or FortiGate?
 
-Key practices from Cisco guidance:
+**Yes.** In an FMC-managed FTD Access Control Policy, a rule can match web traffic using URL-related conditions in addition to zones, networks, ports, users, applications, and other criteria. Conceptually, this is similar to URL-category policy on Palo Alto Networks firewalls or web-category matching on FortiGate, although Cisco's implementation and encrypted-traffic behavior have important differences.
 
-- keep URL and application conditions in separate rules when possible;
-- place URL rules before application rules where that ordering is required for intended encrypted-traffic behavior;
-- place specific rules above general rules;
-- remember that decrypted TLS gives ACP/AppID richer visibility than Do-Not-Decrypt traffic;
-- if a server violates protocol standards and AppID cannot reliably classify it, an L3/L4 rule using IP/port may be more deterministic.
+FTD supports two primary URL-filtering models inside access-control rules:
+
+| FTD URL matching method | What it matches | Licensing note |
+|---|---|---|
+| **Manual URL filtering** | Specific URLs, URL objects/groups, and supported URL lists/feeds | Cisco documents manual URL filtering as available without a special URL Filtering license. |
+| **Category and reputation filtering** | Talos-assigned URL categories plus URL reputation/risk | Requires the applicable **URL Filtering license**. |
+
+A URL can belong to more than one category. Reputation is an additional dimension that lets a policy distinguish, for example, a normally acceptable category from a low-reputation instance of that category.
+
+Example policy concepts:
+
+```text
+Rule: Block Gambling
+Source Zone: INSIDE
+URL Category: Gambling
+Action: Block
+```
+
+```text
+Rule: Block Risky Social Networking
+Source Zone: INSIDE
+URL Category: Social Networking
+URL Reputation: Neutral or worse
+Action: Block
+```
+
+```text
+Rule: Allow Approved Exception
+Source Zone: INSIDE
+URL: approved.example.com
+Action: Allow
+```
+
+The explicit exception should be placed before a broader category block if it is intended to override that block.
+
+### 7.2 URL matching is primarily for browser HTTP/HTTPS traffic
+
+Cisco documents URL filtering as applying to web browsing over HTTP/HTTPS. If the objective is to match a non-browser application merely because it connects to a particular DNS name, use an **FQDN-based access-control condition** where appropriate rather than assuming URL filtering is a generic destination-FQDN matcher for every protocol.
+
+This distinction matters because these are not equivalent concepts:
+
+```text
+URL condition:     https://portal.example.com/path
+FQDN destination:  portal.example.com
+IP destination:    203.0.113.20
+Application:       Example-SaaS
+```
+
+They are different policy dimensions and may be learned or evaluated at different points in the connection.
+
+### 7.3 Category and reputation matching
+
+With URL-category filtering enabled and licensed, FMC can create ACP rules based on Cisco Talos URL classifications. Cisco documents category examples such as Auctions, Job Search, Social Networking, and threat-oriented categories. Rules can also constrain a selected category by reputation.
+
+Reputation levels run from higher-risk/untrusted classifications toward trusted classifications. The matching semantics depend on the rule action. For example, a blocking rule configured at a particular risk threshold can include more severe reputations, while an allowing rule can include more favorable reputations. Always confirm the exact inclusion behavior in the release-specific FMC UI before deploying a broad rule.
+
+A practical design is:
+
+```text
+1. Allow specific approved URL exceptions
+2. Block explicit threat/malware categories
+3. Block unwanted business categories
+4. Apply application-based controls
+5. General web allow with IPS/file inspection as required
+```
+
+### 7.4 What happens with plain HTTP?
+
+For HTTP, the requested host and URI are visible in clear text, so Snort can obtain substantially richer URL information without TLS decryption. This makes manual URL and category-based matching comparatively straightforward after the HTTP request is observed.
+
+However, even with HTTP, FTD cannot know the requested URL from the initial TCP SYN. Cisco documents that the system must first establish enough of the connection to identify DNS/HTTP/HTTPS and obtain the requested domain or URL. Therefore, some packets can pass before a URL-dependent block is conclusively determined.
+
+### 7.5 What happens with HTTPS without decryption?
+
+This is the most important difference to understand operationally.
+
+If HTTPS is **not decrypted**, FTD cannot inspect the encrypted HTTP request path as plaintext. Cisco documents that URL/category decisions for encrypted sessions can instead use information that remains observable, including DNS-derived information, TLS ClientHello/domain information when available, and certificate information such as the certificate subject/common name.
+
+Conceptually:
+
+```text
+Client
+  |
+  | DNS query: portal.example.com
+  v
+FTD may learn domain category/reputation
+  |
+  | TCP + TLS handshake
+  v
+FTD/Snort observes TLS-visible identity information
+  |
+  | encrypted HTTP request:
+  | GET /finance/reports/q4.pdf
+  |        ^ encrypted without TLS decryption
+  v
+ACP URL/category decision uses the information actually visible
+```
+
+Therefore, without decryption, the firewall may be able to identify and categorize the **site/domain** while being unable to make an exact path-level distinction such as:
+
+```text
+Allow: https://example.com/public/
+Block: https://example.com/private/
+```
+
+For reliable inspection of encrypted URI paths and content, TLS decryption is generally required.
+
+### 7.6 DNS filtering can enforce category/reputation before the web connection
+
+Modern FMC access-control policies include **DNS filtering / reputation enforcement on DNS traffic**. Cisco documents this as a mechanism that can evaluate the domain's category and reputation during the DNS lookup, before the browser establishes the subsequent web connection.
+
+Conceptual path:
+
+```text
+Client
+  |
+  | DNS query: gambling-example.com
+  v
+FTD DNS filtering
+  |
+  +--> category/reputation lookup
+  |
+  +--> permitted? continue
+  |
+  +--> blocked? stop before HTTP/HTTPS session is established
+```
+
+This is especially useful for encrypted traffic because the category/reputation decision can often be made using the requested domain rather than waiting for full web-session classification.
+
+Cisco notes that DNS filtering applies to category/reputation handling; manual URL entries do not simply become DNS-filter conditions. In addition, if a URL-category blocking rule contains restrictive application or port conditions, the associated DNS traffic may need to be included so that the DNS-filtering portion can match correctly.
+
+### 7.7 What changes when HTTPS is decrypted?
+
+With a matching Decryption Policy action that successfully decrypts the TLS connection, Snort can inspect the resulting plaintext HTTP transaction. That provides much more precise URL information and enables policy decisions based on information hidden inside the encrypted connection.
+
+Conceptually:
+
+```text
+Encrypted client TLS session
+          |
+          v
+FTD Decryption Policy
+          |
+          v
+Decrypted HTTP request visible to Snort
+          |
+          +--> Host: portal.example.com
+          +--> URI:  /finance/reports/q4.pdf
+          |
+          v
+URL / category / AppID evaluation
+          |
+          v
+ACP rule decision
+```
+
+Decryption therefore improves URL precision, but URL filtering and decryption are still separate features: a URL category rule can sometimes work without decrypting the connection, while path-level visibility generally depends on having access to the decrypted HTTP transaction.
+
+### 7.8 URL category is not the same thing as application identity
+
+This is another useful comparison with Palo Alto/Fortinet designs. A website's **category** and the detected **application** are separate policy attributes.
+
+For example:
+
+```text
+URL category: Social Networking
+Application:  Facebook
+Transport:    HTTPS
+```
+
+An ACP can use URL-related criteria and application criteria, but Cisco recommends thoughtful rule ordering, particularly for encrypted traffic. A broad application rule placed before the URL-category rule can become decisive before the intended URL rule gets the information it needs.
+
+Cisco specifically recommends placing URL rules before application rules where appropriate, especially when the URL rule is a block rule and encrypted traffic is involved. Also, avoid combining URL and application conditions in one rule unless the combination is intentional, because both condition families must be satisfied for the rule to match.
+
+### 7.9 How close is this to Palo Alto or FortiGate NGFW behavior?
+
+At a high level, all three platforms can express policies such as:
+
+```text
+Users in INSIDE
+    |
+    +--> Allow Business/Productivity sites
+    +--> Block Gambling
+    +--> Block Malware/Phishing categories
+    +--> Allow a specific exception
+    +--> Apply application controls
+```
+
+The major design lesson is not to assume that the products discover the URL at exactly the same processing stage or use identical terminology. On FTD, URL matching is tightly tied to **Snort, URL/category intelligence, DNS visibility, TLS metadata, optional TLS decryption, and ACP rule ordering**.
+
+So the direct answer is:
+
+> **Yes — Cisco FTD in NGFW mode can match and enforce ACP rules based on specific URLs, URL categories, and URL reputation, much like Palo Alto and Fortinet. The precision of an HTTPS URL match depends on what the firewall can see; TLS decryption provides the richest path-level visibility, while DNS/TLS metadata can still support domain/category decisions without decryption.**
+
+### 7.10 Operational caveats and verification
+
+When a URL rule does not behave as expected, verify all of the following:
+
+- the rule actually contains a URL condition under the FMC **URLs** tab;
+- category/reputation filtering is properly licensed and configured when used;
+- the rule is above broader application/general allow rules that could preempt it;
+- the traffic is actually HTTP/HTTPS browser traffic if URL filtering is being used;
+- DNS filtering is enabled/configured if you expect category enforcement at lookup time;
+- encrypted traffic exposes enough domain/certificate information for a non-decrypted decision;
+- TLS decryption is active if the rule requires exact encrypted URI/path visibility;
+- connection events show the expected URL, URL Category, URL Reputation, application, and matched ACP rule;
+- a new connection is used after policy deployment.
+
+Cisco also notes that category/reputation fields in connection events depend on applicable URL rules being present in the ACP. If traffic is handled before reaching a URL rule, those URL fields may not be populated as expected.
 
 ## 8. Default action
 
@@ -605,7 +809,7 @@ Before deploying an ACP change, answer these questions:
 
 ### Source information
 
-Statements explicitly attributed to Cisco documentation in this guide include the overall pre-ACP sequence, top-down rule matching, Prefilter actions, LINA/Snort division, L3/L4 versus L7 block behavior, hit-count behavior, and the newer release features described above.
+Statements explicitly attributed to Cisco documentation in this guide include the overall pre-ACP sequence, top-down rule matching, Prefilter actions, LINA/Snort division, L3/L4 versus L7 block behavior, hit-count behavior, URL/category/reputation filtering behavior, and the newer release features described above.
 
 ### Additional explanation
 
@@ -620,7 +824,9 @@ Where the guide recommends a particular design ordering or troubleshooting seque
 ### Cisco product/configuration documentation
 
 - Cisco Secure Firewall Management Center 10.0 — Access Control: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/collections/access-control-100.html
+- Cisco Secure Firewall Management Center Device Configuration Guide 10.x — URL Filtering Rules: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/100/management-center-device-config-10-0/access-url-filtering.html
 - Secure Firewall Management Center Device Configuration Guide 7.6 — Access Control Rules: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/760/management-center-device-config-76/access-rules.html
+- Secure Firewall Management Center Device Configuration Guide 7.6 — URL Filtering Rules: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/760/management-center-device-config-76/access-url-filtering.html
 - Secure Firewall Management Center Device Configuration Guide 7.4 — Access Control Policies: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/740/management-center-device-config-74/access-policies.html
 - Secure Firewall Management Center Device Configuration Guide 7.4 — Prefilter Policies: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/740/management-center-device-config-74/advanced-access-prefilter.html
 - Secure Firewall Management Center Device Configuration Guide 7.6 — Decryption Rules: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/760/management-center-device-config-76/encrypted-traffic-rules.html
