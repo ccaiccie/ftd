@@ -9,6 +9,9 @@
 - [3. Pre-ACP processing stages](#3-pre-acp-processing-stages)
 - [4. ACP rule evaluation logic](#4-acp-rule-evaluation-logic)
 - [5. ACP actions in depth](#5-acp-actions-in-depth)
+  - [5.1 Trust action deep dive](#51-trust-action-deep-dive)
+  - [5.2 Trust vs Allow vs Prefilter Fastpath](#52-trust-vs-allow-vs-prefilter-fastpath)
+  - [5.3 Palo Alto and Fortinet equivalents](#53-palo-alto-and-fortinet-equivalents)
 - [6. L3/L4 versus L7 blocking: why the first packets differ](#6-l3l4-versus-l7-blocking-why-the-first-packets-differ)
 - [7. URL and application matching caveats](#7-url-and-application-matching-caveats)
   - [7.11 File Control: blocking EXE and other file types](#711-file-control-blocking-exe-and-other-file-types)
@@ -187,11 +190,176 @@ Security correctness outranks micro-optimization: do not move a rule merely for 
 - Useful for observation, migration, and policy design.
 - It is not a final permit action.
 
-### Trust
+### 5.1 Trust action deep dive
 
-- Permits matching traffic without further deep Snort inspection for features such as intrusion/file inspection.
-- Cisco specifically positions Trust for traffic you want allowed without advanced L7 inspection, while still allowing certain upstream features such as SI/identity/QoS to have already applied.
-- Trust is not equivalent to Prefilter Fastpath; Prefilter Fastpath can bypass Snort/ACP processing even earlier.
+The **Trust** action is a decisive permit action. When a connection matches a Trust rule, FTD allows that connection to pass and does **not apply further deep inspection or network discovery from the ACP**. Cisco specifically states that trusted traffic cannot be associated with a File Policy, Intrusion Policy, or network discovery policy. Trusted traffic is still subject to identity requirements and rate limiting.
+
+The most important point is that **Trust does not mean “this packet skipped everything on the firewall.”** ACP rules are evaluated after other policy stages. Cisco explicitly documents that Security Intelligence, decryption, user identification, and some decoding/preprocessing occur before ACP rule evaluation. Therefore a connection can already have been decrypted or otherwise processed before it ever reaches the Trust rule.
+
+For example:
+
+```text
+Client HTTPS connection
+        |
+        v
+Prefilter = Analyze
+        |
+        v
+Decryption Policy = Decrypt-Resign
+        |
+        v
+Security Intelligence = allowed
+        |
+        v
+Identity mapping = user known
+        |
+        v
+ACP Trust rule matches
+        |
+        v
+NO additional File Policy
+NO Intrusion Policy
+NO network discovery
+        |
+        v
+Forward
+```
+
+In that case, saying “the connection is trusted” does **not** mean it was never decrypted. The decryption decision happened earlier. The correct interpretation is: **after the Trust rule becomes decisive, do not invoke additional ACP deep-inspection services.**
+
+![FTD Trust vs Allow vs Fastpath](../images/09-09-26-19-37_ftd-acp-trust-vs-allow-fastpath.svg)
+
+[Editable draw.io](../images/09-09-26-19-37_ftd-acp-trust-vs-allow-fastpath.drawio)
+
+#### What Trust bypasses
+
+For traffic that reaches and matches an ACP Trust rule, Cisco documents that Trust prevents further use of:
+
+- intrusion inspection attached through the ACP;
+- file control / file-type blocking;
+- Malware Defense file inspection attached through a File Policy;
+- network discovery for the trusted connection.
+
+This is why a Trust rule cannot be used for traffic where you later want to block `.exe` files, inspect for IPS signatures, or perform malware analysis. Use **Allow** and attach the appropriate File and/or Intrusion Policy instead.
+
+#### What Trust does not necessarily bypass
+
+Trust does not retroactively undo processing that occurs before access control. Depending on configuration, trusted traffic can still be affected by:
+
+- Prefilter behavior before ACP;
+- Decryption Policy decisions;
+- Security Intelligence decisions;
+- user/identity requirements;
+- rate limiting;
+- core LINA forwarding, NAT, routing, state, and protocol/datapath checks.
+
+Cisco specifically warns that a Trust action does not necessarily fastpath the flow. If a matching Decryption rule requires decryption, the connection can be decrypted before the Trust rule permits it.
+
+#### Trust and logging
+
+Trusted connections can be logged, but Cisco recommends avoiding unnecessary Trust logging because trusted flows do not undergo deep inspection/discovery and their connection events therefore contain limited information. Current Cisco documentation also notes specific timing behavior for trusted TCP flow events.
+
+#### Trust and protocols with secondary channels
+
+Cisco calls out protocols such as **FTP and SIP**. These protocols can require inspection to recognize and dynamically open secondary/data channels. A Trust rule can bypass the inspection that creates those helper pinholes/state entries, which can cause the secondary channel to fail. Cisco’s recommendation is to change such a rule from **Trust** to **Allow** if this occurs.
+
+This is an important operational warning: Trust is not automatically “better” simply because it is lighter-weight. Use it only where the application does not depend on inspection services that help establish related flows.
+
+#### Good Trust use cases
+
+Typical engineering use cases include narrowly scoped traffic that you deliberately do not want to send through deep inspection, for example:
+
+```text
+Source:      trusted infrastructure subnet
+Destination: known backup replication peer
+Service:     fixed replication ports
+Action:      Trust
+```
+
+or a tightly controlled management flow where the business has explicitly accepted the reduced inspection depth.
+
+Trust should generally be **narrowly scoped** by zones, networks, ports, users, or other deterministic conditions. A broad Trust rule can accidentally exempt large amounts of traffic from IPS, file control, and malware inspection.
+
+### 5.2 Trust vs Allow vs Prefilter Fastpath
+
+These three actions are commonly confused:
+
+| Behavior | ACP Trust | ACP Allow | Prefilter Fastpath |
+|---|---|---|---|
+| Final permit decision | Yes | Yes | Yes, before normal ACP |
+| Reaches ACP | Yes | Yes | No, Fastpath bypasses normal ACP analysis |
+| Identity requirements | Still applicable | Still applicable | Bypassed by Fastpath according to Cisco prefilter behavior |
+| Rate limiting | Still applicable | Still applicable | Bypassed by Fastpath |
+| File Policy | No | Optional | No |
+| Intrusion Policy | No | Optional | No |
+| Network discovery | No | Can occur | No normal ACP discovery path |
+| Earlier Decryption Policy can already have acted | Yes | Yes | Normally avoided because Fastpath is selected before later ACP/deep inspection |
+| Best mental model | “Permit, stop adding deep ACP inspection” | “Permit, optionally inspect deeply” | “Bypass normal inspection/control path early” |
+
+A useful decision rule is:
+
+```text
+Do I need IPS, File Control, Malware Defense, or discovery?
+        |
+       Yes ---> ACP Allow
+        |
+        No
+        v
+Do I still want the connection to participate in normal ACP / identity / rate limiting?
+        |
+       Yes ---> ACP Trust
+        |
+        No
+        v
+Do I intentionally want the early bypass behavior?
+        |
+       Yes ---> Prefilter Fastpath
+```
+
+Cisco’s own rule-migration guidance maps ACP **Trust** to Prefilter **Fastpath** when moving suitable rules to the prefilter layer, but they are not semantically identical because they occur at different points in the packet-processing path.
+
+### 5.3 Palo Alto and Fortinet equivalents
+
+There is **no perfect one-to-one Trust action** on Palo Alto Networks or FortiGate. The closest behavior is an **allow/accept rule with no threat/security inspection profiles attached**, but the exact packet-processing architecture differs.
+
+#### Palo Alto Networks
+
+On PAN-OS, a Security Policy rule typically has an action such as **allow** or **deny**. Threat/content inspection is added by attaching Security Profiles such as Antivirus, Anti-Spyware, Vulnerability Protection, URL Filtering, File Blocking, WildFire Analysis, or Data Filtering. Palo Alto’s documentation describes an allow rule with profiles as an “allow but scan” model.
+
+Therefore, the closest conceptual mapping is:
+
+```text
+FTD Trust
+   ≈
+PAN-OS Security Policy: Allow
++ no Security Profiles attached
+```
+
+But this is only a conceptual equivalence. PAN-OS still performs its own session/application processing according to its architecture, and features such as App-ID are not simply “turned off” merely because no Security Profiles are attached. So do not read FTD Trust semantics directly into PAN-OS internals.
+
+#### FortiGate
+
+On FortiGate, the closest equivalent is generally:
+
+```text
+Firewall Policy: action accept
+Security Profiles: disabled
+SSL Inspection: no-inspection where appropriate
+```
+
+Fortinet documents that firewall policies can operate in flow-based or proxy-based inspection modes and that Security Profiles such as Antivirus, Web Filter, IPS, Application Control, and File Filter are applied when enabled. If no security profiles are enabled, the policy can accept the traffic without those UTM/security-profile inspections.
+
+Again, this is conceptually similar rather than identical. FortiGate still performs normal firewall state, routing, NAT, and whatever other configured platform features apply.
+
+#### Cross-vendor mental model
+
+| Intent | Cisco FTD | Palo Alto Networks | FortiGate |
+|---|---|---|---|
+| Permit with full threat/file inspection | **Allow** + File/Intrusion Policy | **Allow** + Security Profiles/Profile Group | **Accept** + Security Profiles |
+| Permit without attached deep security profiles | **Trust** | **Allow** with no Security Profiles | **Accept** with Security Profiles disabled |
+| Early inspection bypass | **Prefilter Fastpath** | No exact one-to-one ACP-style equivalent; design depends on PAN-OS feature path | No exact one-to-one equivalent; design depends on policy/profile/inspection configuration |
+
+The biggest FTD-specific distinction is that **Trust is a named ACP action with explicit semantics: permit the traffic, but do not apply further file, intrusion, or network-discovery inspection from that access-control decision.**
 
 ### Block
 
@@ -835,22 +1003,28 @@ ACP is only one enforcement stage. Check:
 - ASP drops;
 - HA/cluster symmetry/state ownership where applicable.
 
+### Symptom: “Trusted FTP/SIP control connection works but related channel fails”
+
+A Trust rule may bypass inspection needed to recognize and open a secondary channel. Cisco specifically calls out FTP and SIP as examples. Change the rule to **Allow** and verify that the required protocol inspection can operate.
+
 ## 13. Common mistakes
 
 1. Treating ACP as the first packet-processing step.
 2. Assuming a LINA `permit` entry proves the final ACP result is Allow.
 3. Expecting application-based blocking to drop the TCP SYN.
 4. Confusing Prefilter Fastpath with ACP Trust.
-5. Forgetting that SI or Decryption can block before ACP.
-6. Mixing URL and application conditions unnecessarily.
-7. Putting a broad rule above a specific exception.
-8. Testing an already-established flow after a policy change and assuming the new rule failed.
-9. Forgetting to Deploy after Save.
-10. Troubleshooting only packet-tracer and not real captures/events.
-11. Assuming an Allow ACP rule guarantees end-to-end success despite intrusion/file/LINA datapath enforcement.
-12. Memorizing packet-tracer phase numbers instead of reading each phase’s type/subtype/result for the actual version and feature set.
-13. Assuming file blocking is based only on filename extension rather than detected file type.
-14. Expecting an HTTPS executable download to be file-inspected when the payload remains encrypted and unavailable to Snort.
+5. Assuming Trust means “absolutely no processing occurred anywhere before ACP.”
+6. Using Trust for traffic that must receive IPS, file control, malware inspection, or network discovery.
+7. Forgetting that SI or Decryption can block or inspect before ACP.
+8. Mixing URL and application conditions unnecessarily.
+9. Putting a broad rule above a specific exception.
+10. Testing an already-established flow after a policy change and assuming the new rule failed.
+11. Forgetting to Deploy after Save.
+12. Troubleshooting only packet-tracer and not real captures/events.
+13. Assuming an Allow ACP rule guarantees end-to-end success despite intrusion/file/LINA datapath enforcement.
+14. Memorizing packet-tracer phase numbers instead of reading each phase’s type/subtype/result for the actual version and feature set.
+15. Assuming file blocking is based only on filename extension rather than detected file type.
+16. Expecting an HTTPS executable download to be file-inspected when the payload remains encrypted and unavailable to Snort.
 
 ## 14. Version notes and newer behavior
 
@@ -961,7 +1135,9 @@ Before deploying an ACP change, answer these questions:
 - Which flows need identity context?
 - Can a required block be expressed at L3/L4 to fail earlier and more deterministically?
 - Which traffic truly needs Allow + intrusion/file inspection?
-- Which trusted infrastructure flows are appropriate for Trust versus Prefilter Fastpath?
+- Which narrowly scoped infrastructure flows, if any, are safe to Trust without file/IPS/discovery inspection?
+- Does any candidate Trust traffic rely on FTP/SIP or another protocol with secondary channels that needs inspection assistance?
+- Would Prefilter Fastpath be more appropriate if the actual requirement is an early inspection bypass?
 - Are exceptions ordered above their parent/general rules?
 - Is the default action intentional?
 - Are logging levels sufficient to troubleshoot without overwhelming FMC/SIEM?
@@ -973,15 +1149,15 @@ Before deploying an ACP change, answer these questions:
 
 ### Source information
 
-Statements explicitly attributed to Cisco documentation in this guide include the overall pre-ACP sequence, top-down rule matching, Prefilter actions, LINA/Snort division, L3/L4 versus L7 block behavior, hit-count behavior, URL/category/reputation filtering behavior, file-policy type blocking and licensing, and the newer release features described above.
+Statements explicitly attributed to Cisco documentation in this guide include the overall pre-ACP sequence, top-down rule matching, Prefilter actions, Trust semantics, LINA/Snort division, L3/L4 versus L7 block behavior, hit-count behavior, URL/category/reputation filtering behavior, file-policy type blocking and licensing, and the newer release features described above.
 
 ### Additional explanation
 
-The mental models, rule-ordering examples, flow tables, and troubleshooting synthesis combine those documented behaviors into operational workflows intended to make packet processing easier to reason about.
+The mental models, cross-vendor comparison, rule-ordering examples, flow tables, and troubleshooting synthesis combine documented behaviors into operational workflows intended to make packet processing easier to reason about.
 
 ### Reasonable inference
 
-Where the guide recommends a particular design ordering or troubleshooting sequence beyond Cisco’s exact wording, treat it as engineering guidance rather than a Cisco-mandated behavior.
+Where the guide recommends a particular design ordering or troubleshooting sequence beyond Cisco’s exact wording, treat it as engineering guidance rather than a Cisco-mandated behavior. Palo Alto and Fortinet comparisons are conceptual mappings, not claims that their packet-processing internals are identical to FTD.
 
 ## 17. References
 
@@ -989,6 +1165,7 @@ Where the guide recommends a particular design ordering or troubleshooting seque
 
 - Cisco Secure Firewall Management Center 10.0 — Access Control: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/collections/access-control-100.html
 - Cisco Secure Firewall Management Center Device Configuration Guide 10.x — Access Control Rules: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/100/management-center-device-config-10-0/access-rules.html
+- Cisco Secure Firewall Management Center Administration Guide 10.x — Connection Logging: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/admin/100/management-center-admin-10-0/events-connect-logging.html
 - Cisco Secure Firewall Management Center Device Configuration Guide 10.x — URL Filtering Rules: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/100/management-center-device-config-10-0/access-url-filtering.html
 - Cisco Secure Firewall Management Center Device Configuration Guide 10.x — File Policies for Network Malware Protection: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/100/management-center-device-config-10-0/advanced-access-file.html
 - Secure Firewall Management Center Device Configuration Guide 7.6 — Access Control Rules: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/760/management-center-device-config-76/access-rules.html
@@ -1008,6 +1185,17 @@ Where the guide recommends a particular design ordering or troubleshooting seque
 - Configure and Verify NAT on FTD: https://www.cisco.com/c/en/us/support/docs/security/firepower-management-center/212702-configure-and-verify-nat-on-ftd.html
 - Troubleshoot Traffic Drops Due to LINA Protocol Inspection on FTD: https://www.cisco.com/c/en/us/support/docs/security/secure-firewall-threat-defense/222904-troubleshoot-traffic-drops-due-to-lina-p.html
 - Firepower Data Path Troubleshooting — Intrusion Policy: https://www.cisco.com/c/en/us/support/docs/security/firepower-ngfw/214609-firepower-data-path-troubleshooting-phas.html
+
+### Palo Alto Networks comparison references
+
+- PAN-OS Security Policy: https://docs.paloaltonetworks.com/network-security/security-policy/administration/security-policy
+- PAN-OS Security Profiles: https://docs.paloaltonetworks.com/pan-os/11-1/pan-os-admin/policy/security-profiles
+
+### Fortinet comparison references
+
+- FortiGate Firewall Policy: https://docs.fortinet.com/document/fortigate/7.6.6/administration-guide/656084/firewall-policy
+- FortiGate Inspection Modes: https://docs.fortinet.com/document/fortigate/latest/administration-guide/721410/inspection-modes
+- FortiGate NGFW Policy: https://docs.fortinet.com/document/fortigate/7.6.0/administration-guide/243446/ngfw-policy
 
 ### Release notes / new features
 
