@@ -11,6 +11,7 @@
 - [5. ACP actions in depth](#5-acp-actions-in-depth)
 - [6. L3/L4 versus L7 blocking: why the first packets differ](#6-l3l4-versus-l7-blocking-why-the-first-packets-differ)
 - [7. URL and application matching caveats](#7-url-and-application-matching-caveats)
+  - [7.11 File Control: blocking EXE and other file types](#711-file-control-blocking-exe-and-other-file-types)
 - [8. Default action](#8-default-action)
 - [9. End-to-end example](#9-end-to-end-example)
 - [10. Save versus Deploy](#10-save-versus-deploy)
@@ -460,6 +461,166 @@ When a URL rule does not behave as expected, verify all of the following:
 
 Cisco also notes that category/reputation fields in connection events depend on applicable URL rules being present in the ACP. If traffic is handled before reaching a URL rule, those URL fields may not be populated as expected.
 
+### 7.11 File Control: blocking EXE and other file types
+
+**Yes — FTD can enforce file-type controls similar in purpose to a Palo Alto Networks File Blocking profile.** Cisco implements this with a **File Policy** that you associate with an applicable ACP rule. The ACP rule first selects the traffic that is provisionally allowed into deeper inspection; the File Policy then identifies transferred files and can allow, detect, block, or perform malware-related handling according to its file rules.
+
+Cisco explicitly documents the use case **“block all `.exe` files”**. This is simple file-type control: it blocks the file because of its identified type, regardless of whether the file is malicious.
+
+#### File type, not merely filename extension
+
+Do not think of the feature as a string match on a filename ending in `.exe`. Snort file inspection identifies supported **file types** from the transferred content/protocol context. Cisco groups supported types into categories such as executables, PDFs, archives, multimedia, and others. The exact file-type catalog depends on release and enabled capabilities.
+
+A conceptual policy is:
+
+```text
+ACP Rule: Users-to-Internet
+  Source Zone:      INSIDE
+  Destination Zone: OUTSIDE
+  Action:           Allow
+  File Policy:      Block-Executables
+
+File Policy: Block-Executables
+  File Rule Action: Block Files
+  File Type:        Executable / MSEXE as exposed by the running FMC release
+  Direction:        Download
+  Protocol:         Applicable supported file-transfer/web protocols
+```
+
+The important detail is that the ACP action is normally **Allow**, even though executables are ultimately blocked. In FTD terminology, Allow means the connection is permitted to continue into the configured Snort inspection path. The attached File Policy can then return a block verdict for a matching file.
+
+#### File-policy action precedence
+
+Cisco documents the general precedence of file-rule actions as:
+
+```text
+Block Files
+    > Block Malware
+        > Malware Cloud Lookup
+            > Detect Files
+```
+
+This means a simple file-type block takes precedence over malware inspection for that file. For example, if all executables are blocked by type, FTD does not need to ask whether that executable is malicious before enforcing the block.
+
+Cisco’s access-control documentation gives a useful example where an ACP rule has both a File Policy and an Intrusion Policy:
+
+```text
+Allowed connection enters Snort
+        |
+        +--> File Policy
+        |      |
+        |      +--> executable detected -> block file
+        |      |
+        |      +--> PDF detected -> malware lookup if configured
+        |
+        +--> remaining traffic -> Intrusion Policy
+```
+
+A file immediately blocked by the File Policy is not subsequently inspected as that file by the intrusion policy. Cisco notes that packets in the session can still be subject to intrusion inspection until the file has actually been detected and blocked.
+
+#### Block every executable versus block only malicious executables
+
+These are two different security objectives:
+
+| Requirement | FTD method | Malware verdict required? |
+|---|---|---|
+| Block every executable regardless of reputation | File Policy → **Block Files** → executable file type | No |
+| Detect/log executable transfers | File Policy → **Detect Files** | No |
+| Allow clean files but block files judged malicious | **Block Malware** / malware analysis workflow | Yes |
+| Query cloud reputation before deciding | **Malware Cloud Lookup** | Yes |
+
+Cisco documents that simple type-based blocking does **not** require a Malware Defense license and does not query the malware cloud. For Firewall Threat Defense devices, blocking or allowing all files of a particular type requires the applicable **IPS license**. Malware-based decisions additionally require **Malware Defense** licensing.
+
+#### HTTPS and TLS decryption
+
+File inspection requires Snort to see the transferred file. If the file is carried inside an encrypted TLS session and the payload remains encrypted, Snort does not have plaintext file content to classify in the same way it does for clear-text or decrypted traffic.
+
+Therefore, for a typical HTTPS executable download:
+
+```text
+Client
+   |
+   | HTTPS GET for setup.exe
+   v
+FTD
+   |
+   +--> not decrypted
+   |       |
+   |       +--> payload remains TLS encrypted
+   |       +--> file content is not available for normal plaintext file inspection
+   |
+   +--> decrypted by Decryption Policy
+           |
+           +--> Snort sees HTTP/file transfer
+           +--> identifies executable file type
+           +--> File Policy = Block Files
+           +--> transfer is blocked
+```
+
+In practice, if the security requirement is “block executable downloads from HTTPS sites,” design TLS decryption coverage so the relevant traffic is exposed to file inspection, subject to your organization’s privacy, certificate, application-compatibility, and legal requirements.
+
+#### Direction matters
+
+File rules can be scoped by transfer direction where supported. This makes policies such as the following possible:
+
+```text
+Internet -> Internal: Block executable downloads
+Internal -> Internet: Detect/log executable uploads
+```
+
+That is useful when the objective is to stop users from downloading software while still allowing controlled uploads to approved repositories, or vice versa.
+
+#### FTD versus Palo Alto file controls
+
+The concepts map reasonably well, but the policy attachment model differs:
+
+| Palo Alto Networks | Cisco FTD |
+|---|---|
+| Security Policy rule | Access Control Policy rule |
+| File Blocking security profile | File Policy |
+| Profile attached to security rule | File Policy attached to applicable ACP rule |
+| File-type action such as block | File rule action such as Block Files / Block with Reset where applicable |
+| WildFire/malware workflow is separate from simple file-type blocking | Malware Defense/malware lookup is separate from simple file-type blocking |
+
+A useful FTD mental model is therefore:
+
+```text
+ACP decides WHO/WHAT connection is eligible
+          |
+          v
+Allow into Snort inspection
+          |
+          v
+File Policy identifies transferred object
+          |
+          +--> EXE -> Block Files
+          +--> PDF -> Malware lookup, if configured
+          +--> other allowed file -> continue
+          |
+          v
+Intrusion inspection / remaining policy processing
+```
+
+#### Important limitation: default action
+
+Cisco documents that you **cannot associate a File Policy with the ACP default action**. If traffic must undergo file inspection, create an explicit ACP rule that matches that traffic and attach the File Policy to that rule rather than relying on the ACP default action.
+
+#### Verification checklist for executable blocking
+
+When a `.exe` download is not blocked as expected, verify:
+
+1. The connection matched the intended **ACP Allow rule**, not an earlier Trust/Fastpath/Allow rule.
+2. The correct File Policy is attached to that ACP rule.
+3. The File Policy has a **Block Files** rule that includes the intended executable file type/category.
+4. Direction and application-protocol constraints in the file rule match the actual transfer.
+5. HTTPS traffic is decrypted when file-content visibility requires it.
+6. The deployment has completed successfully.
+7. The applicable IPS license is enabled for simple FTD file-type control.
+8. FMC connection/file events show that the file was detected and which file rule/action handled it.
+9. The test is not being bypassed by Prefilter Fastpath, ACP Trust, or another earlier rule.
+
+The main operational lesson is that **an ACP Allow action can still result in an individual file being blocked later by the attached File Policy**. That is intentional FTD processing, not a contradiction.
+
 ## 8. Default action
 
 The ACP default action handles traffic that reaches access control but matches no decisive ACP rule. Cisco’s documentation emphasizes that the default action is reached only after earlier stages such as Prefilter/SI/decryption have had their opportunity to fastpath or block traffic.
@@ -688,6 +849,8 @@ ACP is only one enforcement stage. Check:
 10. Troubleshooting only packet-tracer and not real captures/events.
 11. Assuming an Allow ACP rule guarantees end-to-end success despite intrusion/file/LINA datapath enforcement.
 12. Memorizing packet-tracer phase numbers instead of reading each phase’s type/subtype/result for the actual version and feature set.
+13. Assuming file blocking is based only on filename extension rather than detected file type.
+14. Expecting an HTTPS executable download to be file-inspected when the payload remains encrypted and unavailable to Snort.
 
 ## 14. Version notes and newer behavior
 
@@ -804,12 +967,13 @@ Before deploying an ACP change, answer these questions:
 - Are logging levels sufficient to troubleshoot without overwhelming FMC/SIEM?
 - Have you validated both forward and return paths, NAT, and route symmetry?
 - Have you tested with a new connection after deployment?
+- If you require file blocking, is the correct File Policy attached to an explicit ACP rule and is encrypted traffic decrypted where required for file visibility?
 
 ## 16. Source information vs explanation vs inference
 
 ### Source information
 
-Statements explicitly attributed to Cisco documentation in this guide include the overall pre-ACP sequence, top-down rule matching, Prefilter actions, LINA/Snort division, L3/L4 versus L7 block behavior, hit-count behavior, URL/category/reputation filtering behavior, and the newer release features described above.
+Statements explicitly attributed to Cisco documentation in this guide include the overall pre-ACP sequence, top-down rule matching, Prefilter actions, LINA/Snort division, L3/L4 versus L7 block behavior, hit-count behavior, URL/category/reputation filtering behavior, file-policy type blocking and licensing, and the newer release features described above.
 
 ### Additional explanation
 
@@ -824,9 +988,12 @@ Where the guide recommends a particular design ordering or troubleshooting seque
 ### Cisco product/configuration documentation
 
 - Cisco Secure Firewall Management Center 10.0 — Access Control: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/collections/access-control-100.html
+- Cisco Secure Firewall Management Center Device Configuration Guide 10.x — Access Control Rules: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/100/management-center-device-config-10-0/access-rules.html
 - Cisco Secure Firewall Management Center Device Configuration Guide 10.x — URL Filtering Rules: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/100/management-center-device-config-10-0/access-url-filtering.html
+- Cisco Secure Firewall Management Center Device Configuration Guide 10.x — File Policies for Network Malware Protection: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/100/management-center-device-config-10-0/advanced-access-file.html
 - Secure Firewall Management Center Device Configuration Guide 7.6 — Access Control Rules: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/760/management-center-device-config-76/access-rules.html
 - Secure Firewall Management Center Device Configuration Guide 7.6 — URL Filtering Rules: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/760/management-center-device-config-76/access-url-filtering.html
+- Secure Firewall Management Center Device Configuration Guide 7.6 — File Policies for Network Malware Protection: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/760/management-center-device-config-76/advanced-access-file.html
 - Secure Firewall Management Center Device Configuration Guide 7.4 — Access Control Policies: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/740/management-center-device-config-74/access-policies.html
 - Secure Firewall Management Center Device Configuration Guide 7.4 — Prefilter Policies: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/740/management-center-device-config-74/advanced-access-prefilter.html
 - Secure Firewall Management Center Device Configuration Guide 7.6 — Decryption Rules: https://www.cisco.com/c/en/us/td/docs/security/secure-firewall/management-center/device-config/760/management-center-device-config-76/encrypted-traffic-rules.html
